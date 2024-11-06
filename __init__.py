@@ -1,11 +1,9 @@
+import asyncio
 import os
 import time
-import asyncio
 from typing import Any
 
 import execution
-import asyncio
-
 import server
 
 _LOG_TIME = True
@@ -73,7 +71,8 @@ def new_recursive_execute(server, prompt, outputs, current_item, extra_data, exe
     asyncio.run(send_message({
         'node': current_item,
         'current_time': profiler_data['nodes'][current_item],
-        'total_inputs_time': total_inputs_time
+        'total_inputs_time': total_inputs_time,
+        'prompt_id': prompt_id
     }))
 
     inputs_str = ''
