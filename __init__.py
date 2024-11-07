@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import os
+import sys
 import time
 from typing import Any
 
@@ -22,6 +23,36 @@ exist_PromptExecutor_execute = execution.PromptExecutor.execute
 
 profiler_data = {}
 profiler_outputs = []
+
+class StreamToLogger:
+    """
+    Fake file-like stream object that redirects writes to a logger instance.
+    https://stackoverflow.com/questions/11124093/redirect-python-print-output-to-logger
+    """
+    def __init__(self, logger, log_level=logging.INFO):
+        self.logger = logger
+        self.log_level = log_level
+        self.linebuf = ''
+
+    def write(self, buf):
+        temp_linebuf = self.linebuf + buf
+        self.linebuf = ''
+        for line in temp_linebuf.splitlines(True):
+            # From the io.TextIOWrapper docs:
+            #   On output, if newline is None, any '\n' characters written
+            #   are translated to the system default line separator.
+            # By default sys.stdout.write() expects '\n' newlines and then
+            # translates them so this is still cross platform.
+            if line[-1] == '\n':
+                self.logger.log(self.log_level, line.rstrip())
+            else:
+                self.linebuf += line
+
+    def flush(self):
+        if self.linebuf != '':
+            self.logger.log(self.log_level, self.linebuf.rstrip())
+        self.linebuf = ''
+
 
 class HijackFormatter(logging.Formatter):
     job_id = None
@@ -47,6 +78,9 @@ class HijackFormatter(logging.Formatter):
 
     @staticmethod
     def hijack_logging():
+        """
+        logging.rootを置き換える
+        """
         root_logger = logging.getLogger()
 
         # remove all existing handlers
@@ -58,7 +92,32 @@ class HijackFormatter(logging.Formatter):
         handler.setFormatter(formatter)
         root_logger.addHandler(handler)
 
-HijackFormatter.hijack_logging()
+    @staticmethod
+    def hijack_logging_and_print():
+        """
+        loggingだけでなく、stdout, stderrも置き換える
+        print()もログに出力される
+        https://stackoverflow.com/questions/11124093/redirect-python-print-output-to-logger
+        """
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+
+        # remove all existing handlers
+        for handler in root_logger.handlers:
+            root_logger.removeHandler(handler)
+
+        formatter = HijackFormatter()
+        # sys.stdoutに送るとループバックが生じる可能性があるので/dev/stdoutに送る
+        handler = logging.FileHandler(filename="/dev/stdout")
+        handler.setFormatter(formatter)
+        root_logger.addHandler(handler)
+
+        sys.stdout = StreamToLogger(root_logger, logging.INFO)
+
+        sys.stderr = StreamToLogger(root_logger, logging.ERROR)
+
+
+HijackFormatter.hijack_logging_and_print()
 
 
 async def send_message(data) -> None:
