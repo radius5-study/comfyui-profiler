@@ -1,4 +1,7 @@
 import asyncio
+import datetime
+import json
+import logging
 import os
 import time
 from typing import Any
@@ -19,6 +22,44 @@ exist_PromptExecutor_execute = execution.PromptExecutor.execute
 
 profiler_data = {}
 profiler_outputs = []
+
+class HijackFormatter(logging.Formatter):
+    job_id = None
+    template_json_name = None
+    service_name = None
+
+    def formatTime(self, record, datefmt=None) -> str:
+        # https://stackoverflow.com/questions/50873446/python-logger-output-dates-in-is8601-format
+        return datetime.datetime.fromtimestamp(
+            record.created,
+            datetime.timezone.utc
+        ).astimezone().isoformat(sep="T", timespec="milliseconds")
+
+    def format(self, log):
+        return json.dumps({
+            "level": log.levelname,
+            "message": log.getMessage(),
+            "timestamp": self.formatTime(log),
+            "job_id": HijackFormatter.job_id,
+            "template_json_name": HijackFormatter.template_json_name,
+            "service_name": HijackFormatter.service_name,
+        })
+
+    @staticmethod
+    def hijack_logging():
+        root_logger = logging.getLogger()
+
+        # remove all existing handlers
+        for handler in root_logger.handlers:
+            root_logger.removeHandler(handler)
+
+        formatter = HijackFormatter()
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        root_logger.addHandler(handler)
+
+HijackFormatter.hijack_logging()
+
 
 async def send_message(data) -> None:
     s = server.PromptServer.instance
@@ -89,9 +130,18 @@ def new_recursive_execute(server, prompt, outputs, current_item, extra_data, exe
 
 
 def new_prompt_executor_execute(self, prompt, prompt_id, extra_data={}, execute_outputs=[]) -> Any:
+    HijackFormatter.job_id = extra_data.get('job_id', None)
+    HijackFormatter.template_json_name = extra_data.get('template_json_name', None)
+    HijackFormatter.service_name = extra_data.get('service_name', None)
+
     ret = exist_PromptExecutor_execute(self, prompt, prompt_id, extra_data=extra_data, execute_outputs=execute_outputs)
     if _LOG_TIME:
-        print('\n'.join(profiler_outputs))
+        for profiler_output in profiler_outputs:
+            logging.info(profiler_output)
+
+    HijackFormatter.job_id = None
+    HijackFormatter.template_json_name = None
+    HijackFormatter.service_name = None
     return ret
 
 execution.recursive_execute = new_recursive_execute
